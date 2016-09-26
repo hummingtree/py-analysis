@@ -323,7 +323,9 @@ def autocorrelation_error_replicas(delay, N, autocors, cut, Nreplicas):
 
 #sum of a autocorrelation over all delays
 def integrated_autocorrelation_time(data, max_delay):
-  return 0.5 + sum([autocorrelation(data, delay) for delay in range(1, max_delay+1)])
+	cors = [autocorrelation(data, delay) for delay in range(1, max_delay + 1)];
+	print cors
+	return (0.5 + sum([cors[delay] for delay in range(0, max_delay) if cors[delay] > 0.])) * 2.
 
 def integrated_autocorrelation_time_known_mean(data, max_delay, avg):
   return 0.5 + sum([autocorrelation_known_mean(data, delay, avg) for delay in range(1, max_delay+1)])
