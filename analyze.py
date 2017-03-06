@@ -322,10 +322,15 @@ def autocorrelation_error_replicas(delay, N, autocors, cut, Nreplicas):
   return autocorrelation_error(delay, N, autocors, cut) / math.sqrt(Nreplicas)
 
 #sum of a autocorrelation over all delays
-def integrated_autocorrelation_time(data, max_delay):
+def integrated_autocorrelation_time(data, max_delay, show = 0):
 	cors = [autocorrelation(data, delay) for delay in range(1, max_delay + 1)];
-	print cors
-	return (0.5 + sum([cors[delay] for delay in range(0, max_delay) if cors[delay] > 0.])) * 2.
+	cors_count = []
+	for delay in range(0, max_delay):
+		if(cors[delay] > 0.): cors_count.append(cors[delay])
+		else: break
+	if(show):
+		print cors_count
+	return 1. + sum(cors_count) * 2.
 
 def integrated_autocorrelation_time_known_mean(data, max_delay, avg):
   return 0.5 + sum([autocorrelation_known_mean(data, delay, avg) for delay in range(1, max_delay+1)])
@@ -572,6 +577,26 @@ def flow_scale_luscher(t, E, threshold = 0.3):
   scale2 = (t[lower_i] * (upper_t2E - threshold) + t[upper_i] * (threshold - lower_t2E)) / (upper_t2E - lower_t2E)
   return math.sqrt(max(0, scale2))
 
+def running_coupling_luscher(t, E, L):
+  t2E = [t[i]**2 * E[i] for i in range(len(t))]
+  t0 = L * L / 72.
+  if max(t) < t0:
+    raise Exception("Didn't flow long enough!")
+    #(lower_i, upper_i) = (len(t)-2, len(t)-1)
+  else:
+    (lower_i, upper_i) = next((i, i+1) for i in range(len(t)-1) if t[i+1] > t0)
+  lower_t2E = t2E[lower_i]
+  upper_t2E = t2E[upper_i]
+  lower_t = t[lower_i]
+  upper_t = t[upper_i]
+
+  scale2 = (lower_t2E * (upper_t - t0) + upper_t2E * (t0 - lower_t)) / (upper_t - lower_t)
+  return scale2
+
+def flow_scale_luscher_data(t, E):
+  t2E = [t[i]**2 * E[i] for i in range(len(t))]
+  return (t, t2E)
+
 #t are values of t/a^2
 #E is a^4 E = a^4 / 4 * tr(G_mu_nu G_mu_nu)
 #Finds the value of sqrt(t) such that t (d/dt) (t^2 E)
@@ -586,7 +611,7 @@ def flow_scale_BMW(t, E, threshold = 0.3):
 
   #tddt[i] is t (d/dt)(t^2 E) at t = (t[i] = t[i+1])/2
   tddt = [(t[i] + t[i+1])/2 * ddt[i] for i in range(len(ddt))]
-
+ 
   if max(tddt) < threshold:
     #(lower_i, upper_i) = (len(tddt)-2, len(tddt)-1)
     raise Exception("Didn't flow long enough!")
@@ -601,6 +626,22 @@ def flow_scale_BMW(t, E, threshold = 0.3):
 
   scale2 = (lower_t * (upper_tddt - threshold) + upper_t * (threshold - lower_tddt)) / (upper_tddt - lower_tddt)
   return math.sqrt(max(0, scale2))
+
+def flow_scale_BMW_data(t, E, threshold = 0.3):
+  if any([math.isnan(x) for x in E]): return 0.0
+
+  t2E = [t[i]**2 * E[i] for i in range(len(t))]
+  
+  #ddt[i] is (d/dt)(t^2 E) at t = (t[i] + t[i+1])/2
+  ddt = [(t2E[i+1] - t2E[i]) / (t[i+1] - t[i]) for i in range(len(t)-1)]
+
+  #tddt[i] is t (d/dt)(t^2 E) at t = (t[i] = t[i+1])/2
+  tddt = [(t[i] + t[i+1])/2 * ddt[i] for i in range(len(ddt))]
+
+  #ts[i] is the list of t's corresponds to tddt[i]
+  ts = [(t[i] + t[i+1]) / 2 for i in range(len(ddt))]
+
+  return (ts, tddt)
 
 
 def read_scale_setting(filename):
@@ -689,7 +730,7 @@ def histogram(data, box_min, box_width, n_boxes):
 # applies the jackknife error formula.
 def jackknife_error(jackknife_values, central_value):
   N = len(jackknife_values)
-  return math.sqrt((N-1.0)/N * sum([(x - central_value)**2 for x in jackknife_values]))
+  return math.sqrt((N - 1.0)/N * sum([(x - central_value)**2 for x in jackknife_values]))
 
 # Computes the jackknife error on a number, or a list of numbers, 
 # or a list of lists of numbers, or a tuple of lists of tuples of numbers...
@@ -732,7 +773,19 @@ def superjackknife_central_and_error(computation, values, block_size):
 def jackknife_mean_and_error(values, block_size):
   return jackknife_central_and_error(mean, values, block_size)
 
+def jackknife_f_and_error(f, values, block_size):
+	jackknife_samples = make_jackknife_samples(values, block_size)
+  	jackknife_values = [mean(sample) for sample in jackknife_samples]
 
+	f_jackknife_values = [f(jackknife_value) for jackknife_value in jackknife_values]
+	print jackknife_values
+	print max(jackknife_values)
+	f_central_value = mean(f_jackknife_values)
+	
+	return (f_central_value, jackknife_error(f_jackknife_values, f_central_value))
+
+def self(x):
+	return x
 
 def format_error(value, error):
   assert value >= 0
@@ -749,10 +802,26 @@ def format_error(value, error):
   format = "%%0.%df(%%d)" % d
   return format % (value, int(round(10**d * error)))
 
+def linear_model_2d(x, y):
+	assert len(x) == len(y)
+	
+	x_avg = mean(x)
+	y_avg = mean(y)
 
+	x_sqr_sum = sum([i * i for i in x])
+	y_sqr_sum = sum([i * i for i in y])
+	xy_sum = sum([x[i] * y[i] for i in range(len(x))])
 
+	sxx = x_sqr_sum - len(x) * x_avg * x_avg
+	syy = y_sqr_sum - len(y) * y_avg * y_avg
+	sxy = xy_sum - len(x) * x_avg * y_avg
+	s = math.sqrt((syy - sxy * sxy / sxx) / (len(x) - 2))
 
-
-
-
+	m_val = sxy / sxx
+	b_val = y_avg - x_avg * sxy / sxx
+	m_err = s / math.sqrt(sxx)
+	b_err = s * math.sqrt(1.0 / len(x) + x_avg * x_avg / sxx);
+	r_sqr = sxy * sxy / (sxx * syy)
+	
+	return m_val, b_val, m_err, b_err, r_sqr
 
